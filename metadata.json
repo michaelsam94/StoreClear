@@ -1,0 +1,6 @@
+{
+  "name": "StoreClear",
+  "description": "Find hidden space. Leave no trace.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
