@@ -19,6 +19,8 @@ import com.michael.storeclear.util.StorageRoot
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class DashboardState(
     val storageSummary: StorageSummary? = null,
@@ -38,7 +40,8 @@ data class HeatmapState(
     val rootNode: DirectoryHeatNode? = null,
     val currentNode: DirectoryHeatNode? = null,
     val nodeHistory: List<DirectoryHeatNode> = emptyList(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val progressMessage: String? = null
 )
 
 data class ShredState(
@@ -52,7 +55,8 @@ data class EmptyDirsState(
     val emptyDirs: List<FileNode> = emptyList(),
     val checkedDirs: Set<String> = emptySet(),
     val isLoading: Boolean = false,
-    val isCleaning: Boolean = false
+    val isCleaning: Boolean = false,
+    val progressMessage: String? = null
 )
 
 data class CacheCleanerState(
@@ -60,7 +64,8 @@ data class CacheCleanerState(
     val checkedItems: Set<String> = emptySet(),
     val isLoading: Boolean = false,
     val isCleaning: Boolean = false,
-    val needsUsageAccess: Boolean = false
+    val needsUsageAccess: Boolean = false,
+    val progressMessage: String? = null
 )
 
 data class SettingsState(
@@ -216,7 +221,9 @@ class StoreClearViewModel(
         _dashboardState.update { it.copy(isScanning = true) }
         viewModelScope.launch {
             try {
-                val summary = getStorageSummaryUseCase()
+                val summary = withContext(Dispatchers.IO) {
+                    getStorageSummaryUseCase()
+                }
                 _dashboardState.update { it.copy(storageSummary = summary, isScanning = false) }
             } catch (e: Exception) {
                 _dashboardState.update { it.copy(isScanning = false) }
@@ -227,6 +234,15 @@ class StoreClearViewModel(
     // --- DUPLICATE FINDER ---
     fun runDuplicateFinder() {
         val rootUri = _dashboardState.value.rootUriString ?: return
+        _duplicateState.update {
+            it.copy(
+                scanResult = ScanResult.Scanning(
+                    ScanProgress(0, "Starting duplicate scan...", 0, 0, 0L)
+                ),
+                checkedFiles = emptySet(),
+                expandedGroupIndex = null
+            )
+        }
         viewModelScope.launch {
             findDuplicatesUseCase(rootUri, _settingsState.value.algorithm).collect { result ->
                 _duplicateState.update { state ->
@@ -273,28 +289,27 @@ class StoreClearViewModel(
     }
 
     fun deleteSelectedDuplicates() {
-        val rootUri = _dashboardState.value.rootUriString ?: return
+        if (_dashboardState.value.rootUriString == null) return
         viewModelScope.launch {
             _duplicateState.update { it.copy(isDeleting = true) }
-            
+
             val state = _duplicateState.value
             val scanResult = state.scanResult
             if (scanResult is ScanResult.Success) {
-                // Collect file nodes to delete
                 val filesToDelete = scanResult.duplicateGroups.flatMap { it.files }
                     .filter { state.checkedFiles.contains(it.uriString) }
 
-                // Trigger delete in repo
-                // Let's call the repository clean
-                viewModelScope.launch {
+                withContext(Dispatchers.IO) {
                     val containerApp = context.applicationContext as StoreClearApp
                     val repo = containerApp.container.fileRepository
                     repo.deleteFiles(filesToDelete)
-                    
-                    _duplicateState.update { it.copy(isDeleting = false) }
-                    runDuplicateFinder() // Re-run search
-                    refreshSummary() // Refresh storage chart
                 }
+
+                _duplicateState.update { it.copy(isDeleting = false) }
+                runDuplicateFinder()
+                refreshSummary()
+            } else {
+                _duplicateState.update { it.copy(isDeleting = false) }
             }
         }
     }
@@ -302,13 +317,25 @@ class StoreClearViewModel(
     // --- STORAGE HEATMAP ---
     fun loadHeatmap() {
         val rootUri = _dashboardState.value.rootUriString ?: return
-        _heatmapState.update { it.copy(isLoading = true) }
+        _heatmapState.update {
+            it.copy(isLoading = true, progressMessage = "Scanning storage folders...")
+        }
         viewModelScope.launch {
             try {
-                val tree = buildHeatmapUseCase(rootUri, _settingsState.value.scanDepth)
-                _heatmapState.update { it.copy(rootNode = tree, currentNode = tree, nodeHistory = emptyList(), isLoading = false) }
+                val tree = withContext(Dispatchers.Default) {
+                    buildHeatmapUseCase(rootUri, _settingsState.value.scanDepth)
+                }
+                _heatmapState.update {
+                    it.copy(
+                        rootNode = tree,
+                        currentNode = tree,
+                        nodeHistory = emptyList(),
+                        isLoading = false,
+                        progressMessage = null
+                    )
+                }
             } catch (e: Exception) {
-                _heatmapState.update { it.copy(isLoading = false) }
+                _heatmapState.update { it.copy(isLoading = false, progressMessage = null) }
             }
         }
     }
@@ -354,12 +381,14 @@ class StoreClearViewModel(
                 }
 
                 if (job.status == ShredStatus.DONE) {
-                    shredRepository.saveToHistory(
-                        fileName = fileName,
-                        fileSizeBefore = job.fileSize,
-                        algorithm = _settingsState.value.algorithm.javaName,
-                        passCount = job.totalPasses
-                    )
+                    withContext(Dispatchers.IO) {
+                        shredRepository.saveToHistory(
+                            fileName = fileName,
+                            fileSizeBefore = job.fileSize,
+                            algorithm = _settingsState.value.algorithm.javaName,
+                            passCount = job.totalPasses
+                        )
+                    }
                     _shredState.update { state ->
                         state.copy(currentCertificate = job)
                     }
@@ -385,19 +414,24 @@ class StoreClearViewModel(
     // --- EMPTY FOLDERS ---
     fun scanEmptyFolders() {
         val rootUri = _dashboardState.value.rootUriString ?: return
-        _emptyDirsState.update { it.copy(isLoading = true) }
+        _emptyDirsState.update {
+            it.copy(isLoading = true, progressMessage = "Scanning for empty folders...")
+        }
         viewModelScope.launch {
             try {
-                val list = cleanEmptyDirsUseCase.findEmpty(rootUri)
+                val list = withContext(Dispatchers.IO) {
+                    cleanEmptyDirsUseCase.findEmpty(rootUri)
+                }
                 _emptyDirsState.update { state ->
                     state.copy(
                         emptyDirs = list,
                         checkedDirs = list.map { it.uriString }.toSet(),
-                        isLoading = false
+                        isLoading = false,
+                        progressMessage = null
                     )
                 }
             } catch (e: Exception) {
-                _emptyDirsState.update { it.copy(isLoading = false) }
+                _emptyDirsState.update { it.copy(isLoading = false, progressMessage = null) }
             }
         }
     }
@@ -415,13 +449,15 @@ class StoreClearViewModel(
     }
 
     fun deleteSelectedEmptyDirs() {
-        _emptyDirsState.update { it.copy(isCleaning = true) }
+        _emptyDirsState.update { it.copy(isCleaning = true, progressMessage = "Removing empty folders...") }
         viewModelScope.launch {
             val list = _emptyDirsState.value.emptyDirs.filter {
                 _emptyDirsState.value.checkedDirs.contains(it.uriString)
             }
-            cleanEmptyDirsUseCase.clean(list)
-            _emptyDirsState.update { it.copy(isCleaning = false) }
+            withContext(Dispatchers.IO) {
+                cleanEmptyDirsUseCase.clean(list)
+            }
+            _emptyDirsState.update { it.copy(isCleaning = false, progressMessage = null) }
             scanEmptyFolders()
             refreshSummary()
         }
@@ -442,20 +478,25 @@ class StoreClearViewModel(
             }
             return
         }
-        _cacheCleanerState.update { it.copy(isLoading = true, needsUsageAccess = false) }
+        _cacheCleanerState.update {
+            it.copy(isLoading = true, needsUsageAccess = false, progressMessage = "Scanning app caches...")
+        }
         viewModelScope.launch {
             try {
-                val list = cleanBrokenCacheUseCase.scanCache(rootUri)
+                val list = withContext(Dispatchers.IO) {
+                    cleanBrokenCacheUseCase.scanCache(rootUri)
+                }
                 _cacheCleanerState.update { state ->
                     state.copy(
                         cacheItems = list,
                         checkedItems = list.filter { it.isTombstoned }.map { it.packageName }.toSet(),
                         isLoading = false,
-                        needsUsageAccess = false
+                        needsUsageAccess = false,
+                        progressMessage = null
                     )
                 }
             } catch (e: Exception) {
-                _cacheCleanerState.update { it.copy(isLoading = false) }
+                _cacheCleanerState.update { it.copy(isLoading = false, progressMessage = null) }
             }
         }
     }
@@ -483,13 +524,15 @@ class StoreClearViewModel(
     }
 
     fun deleteSelectedCaches() {
-        _cacheCleanerState.update { it.copy(isCleaning = true) }
+        _cacheCleanerState.update { it.copy(isCleaning = true, progressMessage = "Wiping selected caches...") }
         viewModelScope.launch {
             val toClean = _cacheCleanerState.value.cacheItems.filter {
                 _cacheCleanerState.value.checkedItems.contains(it.packageName)
             }
-            cleanBrokenCacheUseCase.clean(toClean)
-            _cacheCleanerState.update { it.copy(isCleaning = false) }
+            withContext(Dispatchers.IO) {
+                cleanBrokenCacheUseCase.clean(toClean)
+            }
+            _cacheCleanerState.update { it.copy(isCleaning = false, progressMessage = null) }
             scanCacheApps()
             refreshSummary()
         }
@@ -524,14 +567,18 @@ class StoreClearViewModel(
 
     fun clearHashCache() {
         viewModelScope.launch {
-            hashRepository.clearCache()
+            withContext(Dispatchers.IO) {
+                hashRepository.clearCache()
+            }
             updateHashCacheCount()
         }
     }
 
     private fun updateHashCacheCount() {
         viewModelScope.launch {
-            val count = hashRepository.getCacheSize()
+            val count = withContext(Dispatchers.IO) {
+                hashRepository.getCacheSize()
+            }
             _settingsState.update { it.copy(hashCacheCount = count) }
         }
     }

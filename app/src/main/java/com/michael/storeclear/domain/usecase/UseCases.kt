@@ -2,16 +2,17 @@ package com.michael.storeclear.domain.usecase
 
 import com.michael.storeclear.domain.model.*
 import com.michael.storeclear.domain.repository.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import java.io.File
+import kotlinx.coroutines.flow.flowOn
 
 class GetStorageSummaryUseCase(private val fileRepository: FileRepository) {
     operator fun invoke(): StorageSummary = fileRepository.getStorageSummary()
 }
 
 class ScanStorageUseCase(private val fileRepository: FileRepository) {
-    operator fun invoke(rootUriString: String): List<FileNode> {
+    suspend operator fun invoke(rootUriString: String): List<FileNode> {
         return fileRepository.walkFileTree(rootUriString)
     }
 }
@@ -80,17 +81,20 @@ class FindDuplicatesUseCase(
 
             completedHashCount++
             val progressPercentage = 30 + ((completedHashCount.toFloat() / totalCandidates) * 60).toInt()
-            emit(
-                ScanResult.Scanning(
-                    ScanProgress(
-                        percentage = progressPercentage,
-                        statusText = "Hashing candidate: ${file.name}",
-                        filesFoundCount = allFiles.size,
-                        duplicatesFoundCount = duplicatesCount,
-                        sizeRecoverableBytes = totalRecoverableSpace
+            val isLastFile = completedHashCount == totalCandidates
+            if (isLastFile || completedHashCount % 25 == 0) {
+                emit(
+                    ScanResult.Scanning(
+                        ScanProgress(
+                            percentage = progressPercentage,
+                            statusText = "Hashing candidate: ${file.name}",
+                            filesFoundCount = allFiles.size,
+                            duplicatesFoundCount = duplicatesCount,
+                            sizeRecoverableBytes = totalRecoverableSpace
+                        )
                     )
                 )
-            )
+            }
         }
 
         // Keep groups that actually have duplicates (count > 1)
@@ -99,11 +103,11 @@ class FindDuplicatesUseCase(
             .sortedByDescending { it.sizeBytes * it.files.size }
 
         emit(ScanResult.Success(duplicateGroups))
-    }
+    }.flowOn(Dispatchers.IO)
 }
 
 class BuildHeatmapUseCase(private val fileRepository: FileRepository) {
-    operator fun invoke(rootUriString: String, maxDepthLimit: Int = 4): DirectoryHeatNode {
+    suspend operator fun invoke(rootUriString: String, maxDepthLimit: Int = 4): DirectoryHeatNode {
         val files = fileRepository.walkFileTree(rootUriString, maxDepthLimit + 1)
         if (files.isEmpty()) {
             return DirectoryHeatNode(rootUriString, "/", 0L)
@@ -210,6 +214,7 @@ class BuildHeatmapUseCase(private val fileRepository: FileRepository) {
 class ShredFilesUseCase(private val shredRepository: ShredRepository) {
     operator fun invoke(uriString: String, intensity: ShredIntensity): Flow<ShredJob> {
         return shredRepository.shredAndLog(uriString, intensity.passCount)
+            .flowOn(Dispatchers.IO)
     }
 }
 

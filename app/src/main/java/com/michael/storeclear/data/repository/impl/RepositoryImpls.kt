@@ -3,8 +3,10 @@ package com.michael.storeclear.data.repository.impl
 import com.michael.storeclear.data.datasource.local.*
 import com.michael.storeclear.domain.model.*
 import com.michael.storeclear.domain.repository.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 class FileRepositoryImpl(
     private val safDataSource: StorageAccessFrameworkDataSource
@@ -13,18 +15,18 @@ class FileRepositoryImpl(
         return safDataSource.getStorageSummary()
     }
 
-    override fun walkFileTree(rootUriString: String, maxDepth: Int): List<FileNode> {
+    override suspend fun walkFileTree(rootUriString: String, maxDepth: Int): List<FileNode> {
         return safDataSource.walkFileTree(rootUriString, maxDepth)
     }
 
-    override suspend fun deleteFiles(files: List<FileNode>): Int {
+    override suspend fun deleteFiles(files: List<FileNode>): Int = withContext(Dispatchers.IO) {
         var count = 0
         for (file in files) {
             if (safDataSource.deleteFile(file.uriString)) {
                 count++
             }
         }
-        return count
+        count
     }
 }
 
@@ -96,39 +98,37 @@ class CacheRepositoryImpl(
     private val safDataSource: StorageAccessFrameworkDataSource
 ) : CacheRepository {
 
-    override suspend fun findEmptyDirectories(rootUriString: String): List<FileNode> {
-        val allNodes = safDataSource.walkFileTree(rootUriString)
-        val directories = allNodes.filter { it.isDirectory }
-        val emptyDirs = mutableListOf<FileNode>()
+    override suspend fun findEmptyDirectories(rootUriString: String): List<FileNode> =
+        withContext(Dispatchers.IO) {
+            val allNodes = safDataSource.walkFileTree(rootUriString)
+            val directories = allNodes.filter { it.isDirectory }
+            val emptyDirs = mutableListOf<FileNode>()
 
-        // A directory qualifies as empty if it contains zero regular files and zero non-empty subdirectories.
-        for (dir in directories) {
-            // Find any child file belonging to this path
-            // Compare URIs or paths
-            val prefix = dir.path
-            val hasFiles = allNodes.any { !it.isDirectory && it.path.startsWith(prefix) }
-            if (!hasFiles) {
-                emptyDirs.add(dir)
+            for (dir in directories) {
+                val prefix = dir.path
+                val hasFiles = allNodes.any { !it.isDirectory && it.path.startsWith(prefix) }
+                if (!hasFiles) {
+                    emptyDirs.add(dir)
+                }
             }
+            emptyDirs
         }
-        return emptyDirs
-    }
 
-    override suspend fun deleteDirectories(directories: List<FileNode>): Int {
+    override suspend fun deleteDirectories(directories: List<FileNode>): Int = withContext(Dispatchers.IO) {
         var count = 0
         for (dir in directories) {
             if (safDataSource.deleteFile(dir.uriString)) {
                 count++
             }
         }
-        return count
+        count
     }
 
     override suspend fun scanCacheCleanItems(rootUriString: String): List<CacheAppItem> {
         return cacheDataSource.scanCacheApps(rootUriString)
     }
 
-    override suspend fun cleanCaches(apps: List<CacheAppItem>): Long {
+    override suspend fun cleanCaches(apps: List<CacheAppItem>): Long = withContext(Dispatchers.IO) {
         var cleanedBytes = 0L
         for (app in apps) {
             val size = app.cacheSize
@@ -136,6 +136,6 @@ class CacheRepositoryImpl(
                 cleanedBytes += size
             }
         }
-        return cleanedBytes
+        cleanedBytes
     }
 }

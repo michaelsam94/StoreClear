@@ -22,7 +22,7 @@ data class CacheAppItem(
 
 interface FileRepository {
     fun getStorageSummary(): StorageSummary
-    fun walkFileTree(rootUriString: String, maxDepth: Int = 10): List<FileNode>
+    suspend fun walkFileTree(rootUriString: String, maxDepth: Int = 10): List<FileNode>
     suspend fun deleteFiles(files: List<FileNode>): Int
 }
 

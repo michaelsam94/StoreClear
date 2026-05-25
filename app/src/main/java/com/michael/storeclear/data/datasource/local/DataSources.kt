@@ -18,6 +18,9 @@ import com.michael.storeclear.util.StoragePermissions
 import com.michael.storeclear.util.StorageRoot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
@@ -27,6 +30,14 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 class StorageAccessFrameworkDataSource(private val context: Context) {
+
+    private var traversalCounter = 0
+
+    private suspend fun onTraversalStep() {
+        if (++traversalCounter % 200 == 0) {
+            yield()
+        }
+    }
 
     fun getStorageSummary(): StorageSummary {
         val path = Environment.getExternalStorageDirectory()
@@ -53,25 +64,29 @@ class StorageAccessFrameworkDataSource(private val context: Context) {
         return StorageSummary(totalBytes, usedBytes, catList)
     }
 
-    fun walkFileTree(rootUriString: String, maxDepth: Int = 10): List<FileNode> {
-        if (StorageRoot.isFileAccess(rootUriString)) {
-            val root = StorageRoot.toFile(rootUriString)
-            if (!root.exists()) return emptyList()
-            val result = mutableListOf<FileNode>()
-            traverseFile(root, result, 0, maxDepth)
-            return result
+    suspend fun walkFileTree(rootUriString: String, maxDepth: Int = 10): List<FileNode> =
+        withContext(Dispatchers.IO) {
+            traversalCounter = 0
+            if (StorageRoot.isFileAccess(rootUriString)) {
+                val root = StorageRoot.toFile(rootUriString)
+                if (!root.exists()) return@withContext emptyList()
+                val result = mutableListOf<FileNode>()
+                traverseFile(root, result, 0, maxDepth)
+                result
+            } else {
+                val rootUri = Uri.parse(rootUriString)
+                val documentFile = DocumentFile.fromTreeUri(context, rootUri) ?: return@withContext emptyList()
+                val result = mutableListOf<FileNode>()
+                traverse(documentFile, result, 0, maxDepth)
+                result
+            }
         }
-        val rootUri = Uri.parse(rootUriString)
-        val documentFile = DocumentFile.fromTreeUri(context, rootUri) ?: return emptyList()
-        val result = mutableListOf<FileNode>()
-        traverse(documentFile, result, 0, maxDepth)
-        return result
-    }
 
-    private fun traverseFile(file: File, result: MutableList<FileNode>, currentDepth: Int, maxDepth: Int) {
+    private suspend fun traverseFile(file: File, result: MutableList<FileNode>, currentDepth: Int, maxDepth: Int) {
         if (currentDepth > maxDepth) return
         val children = file.listFiles() ?: return
         for (child in children) {
+            onTraversalStep()
             val isDir = child.isDirectory
             val node = FileNode(
                 path = child.absolutePath,
@@ -92,10 +107,11 @@ class StorageAccessFrameworkDataSource(private val context: Context) {
         }
     }
 
-    private fun traverse(file: DocumentFile, result: MutableList<FileNode>, currentDepth: Int, maxDepth: Int) {
+    private suspend fun traverse(file: DocumentFile, result: MutableList<FileNode>, currentDepth: Int, maxDepth: Int) {
         if (currentDepth > maxDepth) return
         val list = file.listFiles()
         for (f in list) {
+            onTraversalStep()
             val isDir = f.isDirectory
             val node = FileNode(
                 path = f.uri.path ?: "",
@@ -154,8 +170,10 @@ class FileHashingDataSource(
             return cachedEntity.hash
         }
 
-        // 3. Perform compute
-        val computed = performHashCompute(uriString, algorithm)
+        // 3. Perform compute on a background thread
+        val computed = withContext(Dispatchers.IO) {
+            performHashCompute(uriString, algorithm)
+        }
 
         // 4. Save
         val newEntity = HashCacheEntity(
@@ -425,36 +443,37 @@ class FileOverwriteDataSource(private val context: Context) {
 
 class CacheDataSource(private val context: Context) {
 
-    fun scanCacheApps(rootUriString: String): List<CacheAppItem> {
-        val merged = linkedMapOf<String, CacheAppItem>()
-        val hasAllFiles = Environment.isExternalStorageManager()
-        val hasUsage = StoragePermissions.hasUsageAccess(context)
+    suspend fun scanCacheApps(rootUriString: String): List<CacheAppItem> =
+        withContext(Dispatchers.IO) {
+            val merged = linkedMapOf<String, CacheAppItem>()
+            val hasAllFiles = Environment.isExternalStorageManager()
+            val hasUsage = StoragePermissions.hasUsageAccess(context)
 
-        if (hasAllFiles) {
-            scanExternalCachePerPackage().forEach { merged[it.packageName] = it }
-            scanOrphanFolders().forEach { merged[it.packageName] = it }
-        }
+            if (hasAllFiles) {
+                scanExternalCachePerPackage().forEach { merged[it.packageName] = it }
+                scanOrphanFolders().forEach { merged[it.packageName] = it }
+            }
 
-        if (hasUsage) {
-            scanViaStorageStats().forEach { item ->
-                merged.merge(item.packageName, item) { existing, found ->
-                    when {
-                        found.cacheSize > existing.cacheSize -> found.copy(
-                            uriString = existing.uriString ?: found.uriString
-                        )
-                        else -> existing.copy(
-                            cacheSize = maxOf(existing.cacheSize, found.cacheSize),
-                            uriString = existing.uriString ?: found.uriString
-                        )
+            if (hasUsage) {
+                scanViaStorageStats().forEach { item ->
+                    merged.merge(item.packageName, item) { existing, found ->
+                        when {
+                            found.cacheSize > existing.cacheSize -> found.copy(
+                                uriString = existing.uriString ?: found.uriString
+                            )
+                            else -> existing.copy(
+                                cacheSize = maxOf(existing.cacheSize, found.cacheSize),
+                                uriString = existing.uriString ?: found.uriString
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        return merged.values
-            .filter { it.cacheSize > 0 }
-            .sortedByDescending { it.cacheSize }
-    }
+            merged.values
+                .filter { it.cacheSize > 0 }
+                .sortedByDescending { it.cacheSize }
+        }
 
     private fun scanExternalCachePerPackage(): List<CacheAppItem> {
         val dataDir = resolveAndroidDataDir() ?: return emptyList()

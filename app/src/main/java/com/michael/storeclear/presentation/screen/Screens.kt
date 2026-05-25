@@ -244,7 +244,17 @@ fun DashboardScreen(
                             .height(180.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            if (state.isScanning) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Reading storage info...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -469,6 +479,15 @@ fun DuplicateFinderScreen(
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary
                         )
+                        if (res.progress.filesFoundCount > 0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "${res.progress.filesFoundCount} files scanned · ${res.progress.duplicatesFoundCount} duplicates found",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
                 is ScanResult.Success -> {
@@ -682,7 +701,18 @@ fun HeatmapAnalyzerScreen(
         ) {
             if (state.isLoading) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        state.progressMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             } else {
                 state.currentNode?.let { current ->
@@ -1052,7 +1082,18 @@ fun EmptyDirsScreen(
         ) {
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        state.progressMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             } else if (state.emptyDirs.isEmpty()) {
                 Column(
@@ -1116,7 +1157,10 @@ fun EmptyDirsScreen(
                         Row(modifier = Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text("Deleting directories...")
+                            Text(
+                                text = state.progressMessage ?: "Deleting directories...",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -1187,7 +1231,18 @@ fun CacheCleanerScreen(
         ) {
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        state.progressMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             } else if (state.needsUsageAccess) {
                 Column(
@@ -1327,7 +1382,10 @@ fun CacheCleanerScreen(
                         Row(modifier = Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text("Wiping application caches...")
+                            Text(
+                                text = state.progressMessage ?: "Wiping application caches...",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
