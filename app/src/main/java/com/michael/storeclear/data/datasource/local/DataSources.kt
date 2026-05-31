@@ -478,8 +478,10 @@ class CacheDataSource(private val context: Context) {
     private fun scanExternalCachePerPackage(): List<CacheAppItem> {
         val dataDir = resolveAndroidDataDir() ?: return emptyList()
         val items = mutableListOf<CacheAppItem>()
-        for (pkg in installedPackages()) {
-            val pkgName = pkg.packageName
+        val packageFolders = dataDir.listFiles() ?: return emptyList()
+        for (folder in packageFolders) {
+            if (!folder.isDirectory) continue
+            val pkgName = folder.name
             val cacheDir = File(dataDir, "$pkgName/cache")
             val codeCacheDir = File(dataDir, "$pkgName/code_cache")
             var size = 0L
@@ -545,7 +547,7 @@ class CacheDataSource(private val context: Context) {
                     packageName = folder.name,
                     appName = appLabel(folder.name),
                     cacheSize = size,
-                    isTombstoned = isTombstoned(folder.name),
+                    isTombstoned = false,
                     uriString = StorageRoot.fileUri(cacheFolder)
                 )
             }
@@ -566,7 +568,7 @@ class CacheDataSource(private val context: Context) {
                         packageName = pkgName,
                         appName = appLabel(pkgName),
                         cacheSize = cacheSize,
-                        isTombstoned = isTombstoned(pkgName),
+                        isTombstoned = false,
                         uriString = cacheFolder.uri.toString()
                     )
                 )
@@ -580,19 +582,23 @@ class CacheDataSource(private val context: Context) {
         val storageStatsManager =
             context.getSystemService(Context.STORAGE_STATS_SERVICE) as StorageStatsManager
         val items = mutableListOf<CacheAppItem>()
-        for (pkg in installedPackages()) {
+        val dataDir = resolveAndroidDataDir() ?: return emptyList()
+        val packageFolders = dataDir.listFiles() ?: return emptyList()
+        for (folder in packageFolders) {
+            if (!folder.isDirectory) continue
+            val packageName = folder.name
             try {
                 val stats = storageStatsManager.queryStatsForPackage(
                     StorageManager.UUID_DEFAULT,
-                    pkg.packageName,
+                    packageName,
                     Process.myUserHandle()
                 )
                 if (stats.cacheBytes <= 0L) continue
-                val externalCache = externalCacheDir(pkg.packageName)
+                val externalCache = externalCacheDir(packageName)
                 items.add(
                     CacheAppItem(
-                        packageName = pkg.packageName,
-                        appName = appLabel(pkg.packageName),
+                        packageName = packageName,
+                        appName = appLabel(packageName),
                         cacheSize = stats.cacheBytes,
                         isTombstoned = false,
                         uriString = externalCache?.takeIf { it.exists() }?.let { StorageRoot.fileUri(it) }
@@ -605,31 +611,7 @@ class CacheDataSource(private val context: Context) {
     }
 
     private fun scanOrphanFolders(): List<CacheAppItem> {
-        val dataFolder = resolveAndroidDataDir() ?: return emptyList()
-        return scanPackageFolders(
-            dataFolder,
-            measureCache = { folder ->
-                if (!isTombstoned(folder.name)) {
-                    0L
-                } else {
-                    val cacheFolder = File(folder, "cache")
-                    val codeCacheFolder = File(folder, "code_cache")
-                    var size = 0L
-                    if (cacheFolder.isDirectory) size += calculateFileFolderSize(cacheFolder)
-                    if (codeCacheFolder.isDirectory) size += calculateFileFolderSize(codeCacheFolder)
-                    if (size == 0L) calculateFileFolderSize(folder) else size
-                }
-            },
-            toItem = { folder, _, size ->
-                CacheAppItem(
-                    packageName = folder.name,
-                    appName = folder.name,
-                    cacheSize = size,
-                    isTombstoned = true,
-                    uriString = StorageRoot.fileUri(folder)
-                )
-            }
-        )
+        return emptyList()
     }
 
     private inline fun scanPackageFolders(
@@ -677,22 +659,6 @@ class CacheDataSource(private val context: Context) {
         val dataDir = resolveAndroidDataDir() ?: return null
         return File(dataDir, "$packageName/cache")
     }
-
-    private fun installedPackages() =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getInstalledPackages(
-                PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            context.packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
-        }
-
-    private fun installedPackageNames(): Set<String> =
-        installedPackages().map { it.packageName }.toSet()
-
-    private fun isTombstoned(packageName: String): Boolean =
-        !installedPackageNames().contains(packageName)
 
     private fun appLabel(packageName: String): String {
         return try {

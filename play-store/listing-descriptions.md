@@ -30,17 +30,16 @@ Permanently delete sensitive files using configurable overwrite passes based on 
 **Privacy first**
 StoreClear is built for local operation. No accounts, no third-party analytics, and no uploading of your files. Scanning, hashing, and shredding run on your device.
 
+StoreClear does not request broad installed-app visibility. App cache details are shown only from folders and Android usage information you grant access to.
+
 Grant storage permissions when prompted so StoreClear can analyze and manage the folders you choose.
 
 Find hidden space. Leave no trace.
 
 ## What's new (500 chars max)
-Version 1.0 — initial release
+Version 1.2 — Play policy permission update
 
-• Storage dashboard with category breakdown
-• Duplicate file finder with batch removal
-• Interactive storage heatmap navigator
-• Secure multi-pass file shredder with job queue
-• Empty folder and cache cleanup tools
-• Settings for hash algorithm, shred intensity, and scan depth
-• Dark theme UI optimized for utility workflows
+• Removed broad installed-app visibility permission
+• Uses targeted package visibility instead
+• Cache cleaner now works from granted storage and usage access
+• Storage dashboard, duplicate finder, heatmap, shredder, empty folder cleaner, and settings remain on-device
